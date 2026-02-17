@@ -7,5 +7,4 @@ compatibility_date = "2024-12-01"
 # Then paste the id below
 [[kv_namespaces]]
 binding = "DIALPLAN_KV"
-id = "YOUR_KV_NAMESPACE_ID"
-preview_id = "YOUR_KV_PREVIEW_NAMESPACE_ID"
+id = "3c6e5d08ab7e470182bcd63c87aae82a"
