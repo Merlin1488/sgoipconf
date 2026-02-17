@@ -1,7 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { DialplanClient } from './client/dialplan-client';
-import { dialplanToAsteriskFormat } from './utils/formatter';
+import { ConfigClient, filenameForType } from './client/dialplan-client';
 import { ServerConfig } from './types';
 
 // --- Config ---
@@ -16,41 +15,42 @@ const config: ServerConfig = {
   serverId: process.env.SERVER_ID || 'server-1',
   pollIntervalSec: parseInt(process.env.POLL_INTERVAL || '30', 10),
   authToken: process.env.AUTH_TOKEN,
+  outputDir: process.env.OUTPUT_DIR || '/etc/asterisk',
 };
-
-const OUTPUT_FILE = process.env.OUTPUT_FILE || '/etc/asterisk/extensions_servaster.conf';
 
 // --- Main ---
 
-const client = new DialplanClient(config);
+const client = new ConfigClient(config);
 let timer: ReturnType<typeof setInterval> | null = null;
 
 async function poll(): Promise<void> {
-  const dialplan = await client.poll();
+  const changed = await client.poll();
 
-  // null = no changes or error — stay quiet
-  if (!dialplan) return;
+  // nothing changed — stay quiet
+  if (changed.length === 0) return;
 
-  // Got an update — write to disk
-  const content = dialplanToAsteriskFormat(dialplan);
+  // ensure output dir exists
+  if (!fs.existsSync(config.outputDir)) {
+    fs.mkdirSync(config.outputDir, { recursive: true });
+  }
 
-  try {
-    const dir = path.dirname(OUTPUT_FILE);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+  for (const entry of changed) {
+    const filename = filenameForType(entry.type);
+    const filepath = path.join(config.outputDir, filename);
+
+    try {
+      fs.writeFileSync(filepath, entry.content, 'utf-8');
+      console.log(`[servaster] ${entry.type} v${entry.version} -> ${filepath}`);
+    } catch (err) {
+      console.error(`[servaster] failed to write ${filepath}:`, err);
     }
-    fs.writeFileSync(OUTPUT_FILE, content, 'utf-8');
-    console.log(`[servaster] updated v${dialplan.version} -> ${OUTPUT_FILE}`);
-  } catch (err) {
-    console.error(`[servaster] failed to write ${OUTPUT_FILE}:`, err);
   }
 }
 
 function start(): void {
   console.log(`[servaster] polling ${config.workerUrl} every ${config.pollIntervalSec}s (server: ${config.serverId})`);
-  console.log(`[servaster] output: ${OUTPUT_FILE}`);
+  console.log(`[servaster] output dir: ${config.outputDir}`);
 
-  // initial poll
   poll().catch(console.error);
 
   timer = setInterval(() => {
