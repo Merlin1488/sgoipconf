@@ -1,127 +1,242 @@
 # Servaster
 
-Загружает конфигурацию VoIP диалплана (dialplan) с Cloudflare Workers/KV и конвертирует в формат Asterisk.
+Централизованное управление конфигами Asterisk через Cloudflare.  
+Конфиги хранятся в Cloudflare KV, раздаются через Worker API, серверы забирают их автоматически.
 
-## Архитектура
+**Продакшн:** `https://config.sgoip.com`
+
+## Как это работает
 
 ```
-┌──────────────┐        HTTP         ┌──────────────────┐       ┌──────────────┐
-│  Client      │  ─── GET/PUT ────►  │ Cloudflare Worker │ ◄──► │ Cloudflare   │
-│  (Node.js)   │                     │                  │       │ KV Store     │
-└──────────────┘                     └──────────────────┘       └──────────────┘
+┌─────────────────┐                    ┌──────────────────────┐
+│  Asterisk       │   poll каждые 30s  │  Cloudflare Worker   │
+│  сервер         │ ◄──── GET ───────  │  config.sgoip.com    │
+│                 │                    │         │            │
+│  servaster.js   │                    │         ▼            │
+│  ─────────────  │                    │  ┌────────────────┐  │
+│  пишет .conf    │                    │  │  Cloudflare KV │  │
+│  файлы на диск  │                    │  └────────────────┘  │
+└─────────────────┘                    └──────────────────────┘
+        ▲
+        │ При обновлении:
+        │ extensions.conf
+        │ sip.conf
+        │ voicemail.conf
+        │ ...любые .conf
 ```
 
-- **Cloudflare Worker** (`worker/index.ts`) — API для хранения и раздачи диалпланов через KV
-- **Client** (`src/`) — Node.js сервис, который периодически загружает диалплан и генерирует Asterisk-конфиг
-- **Типы** (`src/types/`) — общие TypeScript-интерфейсы
+1. Ты заливаешь конфиги в Cloudflare (через API или скрипт)
+2. Назначаешь какому серверу какие конфиги отдавать
+3. Бинарник на сервере тихо поллит и пишет обновления на диск
+4. Нет обновлений — молчит
+
+---
 
 ## Быстрый старт
 
-### 1. Установить зависимости
+### 1. Залить конфиги с существующего сервера
 
 ```bash
-npm install
+# Все .conf файлы из /etc/asterisk → Cloudflare
+./scripts/upload-configs.sh pbx-01 ТОКЕН /etc/asterisk https://config.sgoip.com
 ```
 
-### 2. Настроить переменные окружения
+Скрипт автоматически:
+- Читает все `*.conf` из указанной директории
+- Загружает каждый как отдельный конфиг
+- Назначает все загруженные конфиги серверу
+
+### 2. Запустить бинарник на сервере
 
 ```bash
-cp .env.example .env
-# Отредактируйте .env при необходимости
+# Собрать
+npm run bundle
+
+# Скопировать dist/servaster.js на сервер и запустить
+AUTH_TOKEN=ТОКЕН \
+WORKER_URL=https://config.sgoip.com \
+SERVER_ID=pbx-01 \
+OUTPUT_DIR=/etc/asterisk \
+POLL_INTERVAL=30 \
+node servaster.js
 ```
 
-### 3. Запустить Worker локально
+---
 
-```bash
-npm run worker:dev
-```
+## API
 
-### 4. Загрузить тестовый диалплан
+Все эндпоинты (кроме `/health`) требуют заголовок `Authorization: Bearer ТОКЕН`.
 
-```bash
-npm run worker:kv:seed
-```
-
-### 5. Запустить клиент
-
-```bash
-npm run dev
-```
-
-## API Worker'а
+### Конфиги
 
 | Метод | Путь | Описание |
 |-------|------|----------|
-| `GET` | `/dialplan/:serverId` | Получить диалплан сервера |
-| `PUT` | `/dialplan/:serverId` | Обновить диалплан (требует auth) |
-| `GET` | `/health` | Проверка состояния |
+| `GET` | `/config/:serverId` | Все назначенные конфиги сервера (bundle) |
+| `GET` | `/config/:serverId/:type` | Один конфиг |
+| `PUT` | `/config/:serverId/:type` | Создать/обновить конфиг |
 
-### Пример ответа
+### Назначения
 
+| Метод | Путь | Описание |
+|-------|------|----------|
+| `GET` | `/assignment/:serverId` | Какие конфиги назначены серверу |
+| `PUT` | `/assignment/:serverId` | Назначить конфиги серверу |
+
+### Сервис
+
+| Метод | Путь | Описание |
+|-------|------|----------|
+| `GET` | `/health` | Health check (без авторизации) |
+
+### Примеры
+
+**Залить конфиг:**
+```bash
+curl -X PUT https://config.sgoip.com/config/pbx-01/extensions \
+  -H "Authorization: Bearer ТОКЕН" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "[internal]\nexten => 100,1,Dial(SIP/100,30)\n"}'
+```
+
+**Назначить конфиги серверу:**
+```bash
+curl -X PUT https://config.sgoip.com/assignment/pbx-01 \
+  -H "Authorization: Bearer ТОКЕН" \
+  -H "Content-Type: application/json" \
+  -d '{"configs": ["extensions", "sip", "voicemail", "queues"]}'
+```
+
+**Получить все конфиги сервера:**
+```bash
+curl https://config.sgoip.com/config/pbx-01 \
+  -H "Authorization: Bearer ТОКЕН"
+```
+
+**Ответ:**
 ```json
 {
   "success": true,
   "data": {
-    "id": "server-1",
-    "name": "Main Office Dialplan",
-    "version": 1,
-    "updatedAt": "2026-02-17T12:00:00.000Z",
-    "contexts": [
+    "serverId": "pbx-01",
+    "configs": [
       {
-        "name": "internal",
-        "extensions": [
-          { "pattern": "100", "priority": 1, "application": "Dial", "args": "SIP/100,30" }
-        ]
+        "type": "extensions",
+        "version": 3,
+        "updatedAt": "2026-02-17T12:00:00.000Z",
+        "content": "[internal]\nexten => 100,1,Dial(SIP/100,30)\n"
+      },
+      {
+        "type": "sip",
+        "version": 1,
+        "updatedAt": "2026-02-17T11:30:00.000Z",
+        "content": "[general]\ncontext=internal\n..."
       }
     ]
   }
 }
 ```
 
-## Деплой на Cloudflare
+---
 
-1. Создайте KV namespace:
-   ```bash
-   npx wrangler kv namespace create DIALPLAN_KV
-   ```
+## Переменные окружения (клиент)
 
-2. Обновите `wrangler.toml` с полученным KV namespace ID
+| Переменная | По умолчанию | Описание |
+|---|---|---|
+| `AUTH_TOKEN` | *обязательно* | Токен авторизации |
+| `WORKER_URL` | `http://localhost:8787` | URL Worker'а |
+| `SERVER_ID` | `server-1` | ID сервера |
+| `POLL_INTERVAL` | `30` | Интервал опроса (секунды) |
+| `OUTPUT_DIR` | `/etc/asterisk` | Куда писать .conf файлы |
 
-3. Задеплойте Worker:
-   ```bash
-   npm run worker:deploy
-   ```
+---
 
-## Скрипты
+## Systemd сервис
 
-| Команда | Описание |
-|---------|----------|
-| `npm run build` | Скомпилировать TypeScript |
-| `npm run dev` | Запустить клиент в dev-режиме |
-| `npm start` | Запустить скомпилированный клиент |
-| `npm run worker:dev` | Запустить Worker локально |
-| `npm run worker:deploy` | Задеплоить Worker на Cloudflare |
-| `npm run worker:kv:seed` | Загрузить тестовый диалплан |
+```ini
+[Unit]
+Description=Servaster — Asterisk config puller
+After=network.target
+
+[Service]
+Type=simple
+Environment=AUTH_TOKEN=ваш-токен
+Environment=WORKER_URL=https://config.sgoip.com
+Environment=SERVER_ID=pbx-01
+Environment=OUTPUT_DIR=/etc/asterisk
+Environment=POLL_INTERVAL=30
+ExecStart=/usr/bin/node /opt/servaster/servaster.js
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo cp servaster.service /etc/systemd/system/
+sudo systemctl enable --now servaster
+sudo journalctl -u servaster -f
+```
+
+---
+
+## Деплой Worker'а
+
+### Автоматически (GitHub Actions)
+
+При пуше в `main` (если изменились `worker/`, `src/types/` или `wrangler.toml`) — Worker автоматически деплоится.
+
+**Секреты GitHub** (`Settings → Secrets → Actions`):
+- `CLOUDFLARE_API_TOKEN` — API токен Cloudflare
+- `CLOUDFLARE_ACCOUNT_ID` — ID аккаунта Cloudflare
+
+### Вручную
+
+```bash
+npm run worker:deploy
+npx wrangler secret put AUTH_TOKEN
+```
+
+---
+
+## Разработка
+
+```bash
+npm install                  # зависимости
+npm run worker:dev           # Worker локально на :8787
+npm run worker:kv:seed       # тестовые данные
+npm run dev                  # клиент в dev-режиме
+npm run build                # TypeScript компиляция
+npm run bundle               # сборка бинарника dist/servaster.js
+```
+
+---
 
 ## Структура проекта
 
 ```
 servaster/
 ├── src/
-│   ├── index.ts              # Точка входа клиента
+│   ├── index.ts                # Точка входа клиента (поллинг + запись на диск)
 │   ├── client/
-│   │   └── dialplan-client.ts # HTTP клиент для Worker API
+│   │   └── dialplan-client.ts  # HTTP клиент для Worker API
 │   ├── types/
-│   │   ├── index.ts           # Реэкспорт типов
-│   │   └── dialplan.ts        # Интерфейсы Dialplan, Context, Extension
+│   │   ├── index.ts            # Реэкспорт типов
+│   │   └── dialplan.ts         # ConfigEntry, ServerAssignment, ServerBundle
 │   └── utils/
-│       └── formatter.ts       # Конвертация в Asterisk-формат
+│       └── formatter.ts        # Утилиты форматирования
 ├── worker/
-│   └── index.ts               # Cloudflare Worker
+│   └── index.ts                # Cloudflare Worker (API)
 ├── scripts/
-│   └── seed-kv.ts             # Скрипт загрузки тестовых данных
-├── wrangler.toml               # Конфигурация Wrangler
-├── tsconfig.json               # TypeScript для клиента
-├── tsconfig.worker.json        # TypeScript для Worker
+│   ├── upload-configs.sh       # Заливка всех .conf файлов в Cloudflare
+│   └── seed-kv.ts              # Тестовые данные
+├── dist/
+│   └── servaster.js            # Собранный бинарник (esbuild)
+├── .github/
+│   └── workflows/
+│       └── deploy-worker.yml   # CI/CD деплой Worker'а
+├── wrangler.toml               # Конфигурация Cloudflare Worker
+├── tsconfig.json               # TypeScript (клиент)
+├── tsconfig.worker.json        # TypeScript (Worker)
 └── package.json
 ```
