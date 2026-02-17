@@ -1,0 +1,33 @@
+{
+  "name": "servaster",
+  "version": "1.0.0",
+  "description": "Fetch VoIP dialplan configurations from Cloudflare Workers/KV",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "bundle": "esbuild src/index.ts --bundle --platform=node --target=node20 --outfile=dist/servaster.js --minify",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/servaster.js",
+    "worker:dev": "wrangler dev worker/index.ts --config wrangler.toml",
+    "worker:deploy": "wrangler deploy --config wrangler.toml",
+    "worker:kv:seed": "tsx scripts/seed-kv.ts"
+  },
+  "keywords": [
+    "voip",
+    "dialplan",
+    "cloudflare",
+    "asterisk"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260217.0",
+    "@types/node": "^25.2.3",
+    "dotenv": "^17.3.1",
+    "esbuild": "^0.27.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.65.0"
+  }
+}
