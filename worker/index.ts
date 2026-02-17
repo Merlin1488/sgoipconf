@@ -21,7 +21,7 @@ export interface Env {
   AUTH_TOKEN: string;
 }
 
-type ConfigType = 'extensions' | 'sip' | 'pjsip' | 'voicemail' | 'queues' | 'musiconhold' | 'features' | 'custom';
+type ConfigType = string;
 
 interface ConfigEntry {
   type: ConfigType;

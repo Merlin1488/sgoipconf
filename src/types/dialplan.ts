@@ -1,25 +1,22 @@
 // --- Config types ---
 
-/** Supported Asterisk config file types */
-export type ConfigType =
-  | 'extensions'   // extensions.conf — dialplan
-  | 'sip'          // sip.conf
-  | 'pjsip'        // pjsip.conf
-  | 'voicemail'    // voicemail.conf
-  | 'queues'       // queues.conf
-  | 'musiconhold'  // musiconhold.conf
-  | 'features'     // features.conf
-  | 'custom';      // any custom config
+/**
+ * Config type = filename without .conf extension.
+ * Examples: "extensions", "sip", "pjsip", "voicemail", "queues",
+ *           "manager", "http", "modules", "cdr", etc.
+ * Any string is valid — maps to {type}.conf on disk.
+ */
+export type ConfigType = string;
 
 /** A single config blob stored in KV */
 export interface ConfigEntry {
-  /** Config type */
+  /** Config type (filename without .conf) */
   type: ConfigType;
   /** Version for conditional fetch */
   version: number;
   /** Timestamp of last update */
   updatedAt: string;
-  /** Raw config content (Asterisk-format text) */
+  /** Raw config content */
   content: string;
 }
 
@@ -34,26 +31,6 @@ export interface ServerAssignment {
 export interface ServerBundle {
   serverId: string;
   configs: ConfigEntry[];
-}
-
-// --- Dialplan-specific types (used for structured dialplan) ---
-
-/** Represents a single dialplan extension/rule */
-export interface DialplanExtension {
-  /** Extension pattern, e.g. "_XXXX", "100", "_9NXXXXXXXXX" */
-  pattern: string;
-  /** Priority/order of the extension */
-  priority: number;
-  /** Application to execute, e.g. "Dial", "Playback", "Hangup" */
-  application: string;
-  /** Arguments for the application */
-  args: string;
-}
-
-/** A named context containing extensions */
-export interface DialplanContext {
-  name: string;
-  extensions: DialplanExtension[];
 }
 
 // --- API ---

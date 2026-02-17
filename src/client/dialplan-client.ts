@@ -1,19 +1,8 @@
 import { ConfigEntry, ServerBundle, ApiResponse, ServerConfig } from '../types';
 
-/** Maps config type to filename */
-const CONFIG_FILENAMES: Record<string, string> = {
-  extensions: 'extensions.conf',
-  sip: 'sip.conf',
-  pjsip: 'pjsip.conf',
-  voicemail: 'voicemail.conf',
-  queues: 'queues.conf',
-  musiconhold: 'musiconhold.conf',
-  features: 'features.conf',
-  custom: 'custom.conf',
-};
-
+/** Config type -> filename: just append .conf */
 export function filenameForType(type: string): string {
-  return CONFIG_FILENAMES[type] || `${type}.conf`;
+  return `${type}.conf`;
 }
 
 /**
