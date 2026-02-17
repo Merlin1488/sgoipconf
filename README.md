@@ -150,9 +150,24 @@ curl https://config.sgoip.com/config/pbx-01 \
 
 ---
 
-## Systemd сервис
+## Установка на сервер
 
-```ini
+### Требования
+
+- Node.js 20+ (`curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt install -y nodejs`)
+
+### 1. Скопировать бинарник
+
+```bash
+sudo mkdir -p /opt/servaster
+# скопировать dist/servaster.js на сервер:
+scp dist/servaster.js root@ваш-сервер:/opt/servaster/servaster.js
+```
+
+### 2. Создать systemd сервис
+
+```bash
+sudo cat > /etc/systemd/system/servaster.service << 'EOF'
 [Unit]
 Description=Servaster — Asterisk config puller
 After=network.target
@@ -170,10 +185,78 @@ RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
+EOF
 ```
 
+> **SERVER_ID** — уникальное имя сервера (например `pbx-01`, `pbx-moscow`, `sip-backup`)  
+> **AUTH_TOKEN** — токен, который задан в Cloudflare Worker
+
+### 3. Запустить
+
 ```bash
-sudo cp servaster.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now servaster
+```
+
+### 4. Проверить
+
+```bash
+# Статус
+sudo systemctl status servaster
+
+# Логи в реалтайме
+sudo journalctl -u servaster -f
+```
+
+Если конфиги назначены — увидишь:
+```
+[servaster] polling https://config.sgoip.com every 30s (server: pbx-01)
+[servaster] output dir: /etc/asterisk
+[servaster] extensions v1 -> /etc/asterisk/extensions.conf
+[servaster] sip v1 -> /etc/asterisk/sip.conf
+```
+
+Если ничего не обновилось — тишина (так и должно быть).
+
+### 5. Обновить бинарник
+
+```bash
+scp dist/servaster.js root@ваш-сервер:/opt/servaster/servaster.js
+ssh root@ваш-сервер systemctl restart servaster
+```
+
+---
+
+## Установка одной командой
+
+Скопируй и запусти на сервере (замени переменные):
+
+```bash
+SERVER_ID="pbx-01"
+AUTH_TOKEN="ваш-токен"
+
+sudo mkdir -p /opt/servaster
+curl -sL https://raw.githubusercontent.com/Merlin1488/sgoipconf/main/dist/servaster.js -o /opt/servaster/servaster.js
+
+sudo tee /etc/systemd/system/servaster.service > /dev/null << EOF
+[Unit]
+Description=Servaster
+After=network.target
+[Service]
+Type=simple
+Environment=AUTH_TOKEN=$AUTH_TOKEN
+Environment=WORKER_URL=https://config.sgoip.com
+Environment=SERVER_ID=$SERVER_ID
+Environment=OUTPUT_DIR=/etc/asterisk
+Environment=POLL_INTERVAL=30
+ExecStart=/usr/bin/node /opt/servaster/servaster.js
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
 sudo systemctl enable --now servaster
 sudo journalctl -u servaster -f
 ```
